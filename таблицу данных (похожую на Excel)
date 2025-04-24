@@ -1,0 +1,217 @@
+Этот код реализует интерактивную таблицу данных (похожую на Excel) с возможностью сортировки, поиска и редактирования данных. Разберём его по частям:
+
+1. Основные функции
+Функция	Что делает	Как работает
+Сортировка	Сортирует данные по столбцу	Клик по заголовку сортирует по возрастанию, повторный клик — по убыванию
+Поиск	Фильтрует данные по введённому тексту	Показывает строку полей поиска при нажатии кнопки, фильтрует при вводе
+Редактирование	Позволяет изменять ячейки	Двойной клик по ячейке открывает поле ввода, Enter сохраняет
+ID строк	Уникально идентифицирует строки	Каждой строке добавляется скрытый числовой ID
+******************************************************************************************************************
+import React from 'react';
+import { cloneDeep } from 'lodash';
+
+class DataTable extends React.Component {
+  constructor(props) {
+    super(props);
+    
+    // Клонируем данные и добавляем уникальный ID к каждой строке
+    const data = cloneDeep(props.initialData).map((row, idx) => 
+      [...row, idx] // Добавляем ID как последний элемент строки
+    );
+
+    this.state = {
+      data,               // Данные с ID строк
+      sortby: null,       // Колонка для сортировки
+      descending: false,  // Направление сортировки
+      edit: null,         // Редактируемая ячейка {row, column}
+      search: false,      // Флаг режима поиска
+    };
+
+    this.preSearchData = null; // Хранит данные до поиска
+
+    // Привязка методов
+    this.sort = this.sort.bind(this);
+    this.showEditor = this.showEditor.bind(this);
+    this.save = this.save.bind(this);
+    this.toggleSearch = this.toggleSearch.bind(this);
+    this.search = this.search.bind(this);
+  }
+
+  // Переключение режима поиска
+  toggleSearch() {
+    if (this.state.search) {
+      // Выход из режима поиска - восстанавливаем данные
+      this.setState({
+        data: this.preSearchData,
+        search: false,
+      });
+      this.preSearchData = null;
+    } else {
+      // Вход в режим поиска - сохраняем текущие данные
+      this.preSearchData = this.state.data;
+      this.setState({
+        search: true,
+      });
+    }
+  }
+
+  // Выполнение поиска
+  search(e) {
+    const searchTerm = e.target.value.toLowerCase();
+    const columnIdx = e.target.dataset.idx;
+
+    if (!searchTerm) {
+      this.setState({ data: this.preSearchData });
+      return;
+    }
+
+    const filteredData = this.preSearchData.filter(row => 
+      row[columnIdx].toString().toLowerCase().includes(searchTerm)
+    );
+
+    this.setState({ data: filteredData });
+  }
+
+  // Отображение редактора ячейки
+  showEditor(e) {
+    const recordId = parseInt(e.target.parentNode.dataset.row, 10);
+    const columnIdx = parseInt(e.target.dataset.cell, 10);
+    
+    this.setState({
+      edit: {
+        row: recordId,
+        column: columnIdx
+      }
+    });
+  }
+
+  // Сохранение изменений
+  save(e) {
+    e.preventDefault();
+    const input = e.target.firstChild.value;
+    const { row, column } = this.state.edit;
+    
+    // Обновляем как отображаемые данные, так и preSearchData если есть
+    const newData = [...this.state.data];
+    newData[row][column] = input;
+    
+    this.setState({
+      data: newData,
+      edit: null
+    });
+
+    if (this.preSearchData) {
+      const newPreSearchData = [...this.preSearchData];
+      const originalRow = newPreSearchData.find(r => r[r.length-1] === row);
+      if (originalRow) {
+        originalRow[column] = input;
+      }
+    }
+  }
+
+  // Сортировка данных
+  sort(key) {
+    let descending = false;
+    
+    if (this.state.sortby === key) {
+      descending = !this.state.descending;
+    }
+    
+    const sortedData = [...this.state.data].sort((a, b) => {
+      return descending 
+        ? (a[key] < b[key] ? 1 : -1)
+        : (a[key] > b[key] ? 1 : -1);
+    });
+
+    this.setState({
+      data: sortedData,
+      sortby: key,
+      descending
+    });
+  }
+
+  render() {
+    // Строка поиска
+    const searchRow = this.state.search ? (
+      <tr onChange={this.search}>
+        {this.props.headers.map((_, idx) => (
+          <td key={idx}>
+            <input 
+              type="text" 
+              data-idx={idx} 
+              placeholder={`Search ${this.props.headers[idx]}`}
+            />
+          </td>
+        ))}
+      </tr>
+    ) : null;
+
+    return (
+      <div className="data-table">
+        <button 
+          className="search-toggle"
+          onClick={this.toggleSearch}
+        >
+          {this.state.search ? 'Hide Search' : 'Show Search'}
+        </button>
+
+        <table>
+          <thead>
+            <tr>
+              {this.props.headers.map((title, idx) => (
+                <th 
+                  key={idx} 
+                  onClick={() => this.sort(idx)}
+                >
+                  {title}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody onDoubleClick={this.showEditor}>
+            {searchRow}
+            {this.state.data.map((row, rowIdx) => {
+              const recordId = row[row.length - 1]; // Получаем ID строки
+              return (
+                <tr key={recordId} data-row={recordId}>
+                  {row.map((cell, columnIdx) => {
+                    // Не отображаем столбец с ID
+                    if (columnIdx === this.props.headers.length) return null;
+                    
+                    // Если это редактируемая ячейка
+                    if (this.state.edit && 
+                        this.state.edit.row === recordId && 
+                        this.state.edit.column === columnIdx) {
+                      return (
+                        <td key={columnIdx}>
+                          <form onSubmit={this.save}>
+                            <input 
+                              type="text" 
+                              defaultValue={cell} 
+                              autoFocus
+                            />
+                          </form>
+                        </td>
+                      );
+                    }
+                    
+                    return (
+                      <td 
+                        key={columnIdx} 
+                        data-cell={columnIdx}
+                      >
+                        {cell}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+}
+
+export default DataTable;
